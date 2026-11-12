@@ -1,0 +1,148 @@
+# 51 只 A 股每日分析：周一至周五 07:05 UTC（北京时间 15:05）定时运行。
+# 两个 job 各用一个 Gemini key 分跑一半股票，跑完把 reports/ 提交回仓库，
+# 这样仓库持续有提交，定时任务不会因 60 天无活动被自动停用。
+# 注意：reports/ 在 .gitignore 里，提交时用 git add -f。
+name: Daily stock analysis (51 A-shares)
+
+on:
+  schedule:
+    - cron: '5 7 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      test_mode:
+        description: '测试模式：只跑 3 只股票（516190,300045,688608），且只跑 A 组（只用 GEMINI_API_KEY）'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  analyze-a:
+    name: Analyze group A (26 stocks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check Gemini key
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY 未设置：请在仓库 Settings → Secrets and variables → Actions 中添加。"
+            exit 1
+          fi
+
+      - name: Run analysis (group A)
+        run: |
+          if [ "${{ inputs.test_mode }}" = "true" ]; then
+            STOCKS="516190,300045,688608"
+          else
+            STOCKS="516190,300045,688608,600176,600744,002436,600869,000977,603799,300065,688566,300333,300115,300926,601360,300059,002594,000547,600310,601218,002415,300212,002310,300759,603986,688584"
+          fi
+          echo "Analyzing: $STOCKS"
+          python main.py --stocks "$STOCKS"
+
+      - name: Upload reports (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-group-a
+          path: reports/
+          if-no-files-found: warn
+
+      - name: Commit reports back to repo
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ ! -d reports ]; then
+            echo "No reports directory, nothing to commit."
+            exit 0
+          fi
+          git add -f reports/
+          if git diff --cached --quiet; then
+            echo "No new reports to commit."
+            exit 0
+          fi
+          git commit -m "chore: daily stock reports (group A) $(date -u +%Y-%m-%d)"
+          git pull --rebase origin main || true
+          git push origin main || (git pull --rebase origin main && git push origin main)
+
+  analyze-b:
+    name: Analyze group B (25 stocks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    # 测试模式下不跑 B 组（只用第一个 key 跑 3 只验证流程）。
+    if: ${{ inputs.test_mode != true }}
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY_2 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check Gemini key
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::GEMINI_API_KEY_2 未设置：请在仓库 Settings → Secrets and variables → Actions 中添加第二个 Gemini key。"
+            exit 1
+          fi
+
+      - name: Run analysis (group B)
+        run: |
+          STOCKS="688037,688521,002364,002304,600703,300634,001309,300570,600089,600601,000988,002281,002156,300604,600198,002230,000001,002269,000049,601816,400023,001267,512010,512170,400016"
+          echo "Analyzing: $STOCKS"
+          python main.py --stocks "$STOCKS"
+
+      - name: Upload reports (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-group-b
+          path: reports/
+          if-no-files-found: warn
+
+      - name: Commit reports back to repo
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ ! -d reports ]; then
+            echo "No reports directory, nothing to commit."
+            exit 0
+          fi
+          git add -f reports/
+          if git diff --cached --quiet; then
+            echo "No new reports to commit."
+            exit 0
+          fi
+          git commit -m "chore: daily stock reports (group B) $(date -u +%Y-%m-%d)"
+          git pull --rebase origin main || true
+          git push origin main || (git pull --rebase origin main && git push origin main)
